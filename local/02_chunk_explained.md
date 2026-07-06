@@ -10,7 +10,7 @@
 Run it with:
 
 ```bash
-uv run --no-project --python 3.12 python local/02_chunk.py
+uv run python local/02_chunk.py
 ```
 
 ---

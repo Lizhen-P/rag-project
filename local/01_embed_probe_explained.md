@@ -10,7 +10,7 @@
 Run it with:
 
 ```bash
-uv run --no-project --python 3.12 --with numpy python local/01_embed_probe.py
+uv run python local/01_embed_probe.py
 ```
 
 ---

@@ -8,7 +8,7 @@ local/chunks.jsonl — one JSON object per line, ready for embedding in Task 3.
 Pure standard library — nothing to install.
 
 Run it with:
-    uv run --no-project --python 3.12 python local/02_chunk.py
+    uv run python local/02_chunk.py
 """
 
 import hashlib

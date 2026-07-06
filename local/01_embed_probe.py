@@ -8,7 +8,7 @@ This is the single most important intuition in the whole RAG project. Everything
 downstream (chunking, indexing, retrieval) is plumbing around this one idea.
 
 Run it with:
-    uv run --no-project --python 3.12 --with numpy python local/01_embed_probe.py
+    uv run python local/01_embed_probe.py
 """
 
 import json
