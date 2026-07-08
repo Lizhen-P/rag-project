@@ -25,7 +25,7 @@ flowchart LR
     B --> C["03 embed + index<br>bge-m3 → FAISS"]
     Q(["question"]) --> D["04 retrieve<br>top-k chunks"]
     C --> D
-    D --> E["05 answer<br>qwen2.5:32b"]
+    D --> E["05 answer<br>qwen3.5:9b"]
     E --> F(["cited answer"])
 ```
 
@@ -35,7 +35,7 @@ flowchart LR
 | Chunk documents | `02_chunk.py` (structure-aware) | Lambda |
 | Embed text (1024-dim) | Ollama `bge-m3` | Bedrock Titan Embeddings v2 |
 | Vector index + search | FAISS | S3 Vectors |
-| Generate cited answer | Ollama `qwen2.5:32b` | Bedrock Claude (Converse API) |
+| Generate cited answer | Ollama `qwen3.5:9b` (or `gpt-oss:20b`) | Bedrock Claude (Converse API) |
 | Provision it all | — | Terraform |
 
 `bge-m3` was picked because it produces **1024-dimensional vectors — the same
@@ -52,9 +52,9 @@ mapping).
 | 0 | [`00_fetch_corpus.py`](local/00_fetch_corpus.py) | Download the 73-doc corpus, pinned to provider v6.53.0 | ✅ |
 | 1 | [`01_embed_probe.py`](local/01_embed_probe.py) | Text → 1024-dim vector; build cosine-similarity intuition | ✅ |
 | 2 | [`02_chunk.py`](local/02_chunk.py) | Structure-aware chunking → 893 chunks with metadata (`chunks.jsonl`) | ✅ |
-| 3 | `03_index.py` | Batch-embed all chunks → FAISS index + metadata sidecar | next |
-| 4 | `04_retrieve.py` | Question → top-k most relevant chunks | todo |
-| 5 | `05_answer.py` | Top-k chunks + question → grounded, cited answer | todo |
+| 3 | [`03_index.py`](local/03_index.py) | Batch-embed all chunks → FAISS index + metadata sidecar | ✅ |
+| 4 | [`04_retrieve.py`](local/04_retrieve.py) | Question → top-k most relevant chunks, calibrated scores | ✅ |
+| 5 | [`05_answer.py`](local/05_answer.py) | Top-k chunks + question → grounded, cited answer (or an honest refusal) | ✅ |
 
 ## Running it
 
@@ -62,8 +62,8 @@ Prerequisites: [uv](https://docs.astral.sh/uv/) and [Ollama](https://ollama.com)
 with the two models pulled:
 
 ```bash
-ollama pull bge-m3        # embeddings (~1.2 GB)
-ollama pull qwen2.5:32b   # generation, Task 5 (~20 GB; any qwen2.5 size works)
+ollama pull bge-m3       # embeddings (~1.2 GB)
+ollama pull qwen3.5:9b   # generation (~6.6 GB; gpt-oss:20b also supported)
 ```
 
 Then, from the repo root:
@@ -73,6 +73,9 @@ uv sync                                   # create .venv with numpy + faiss-cpu
 uv run python local/00_fetch_corpus.py    # download the corpus (~740 KB)
 uv run python local/01_embed_probe.py     # Task 1: embedding intuition
 uv run python local/02_chunk.py           # Task 2: build chunks.jsonl
+uv run python local/03_index.py           # Task 3: embed all chunks -> FAISS
+uv run python local/04_retrieve.py "How do I enable versioning on an S3 bucket?"
+uv run python local/05_answer.py  "How do I enable versioning on an S3 bucket?"
 ```
 
 Task 1's output, verbatim — the core idea of the whole project in four lines:
@@ -87,6 +90,23 @@ cosine similarity (higher = more similar in MEANING)
 A ("Kinesis Data Streams ingests real-time event data") and B ("Firehose
 delivers streaming records into an S3 bucket") share almost no words, yet
 score highest — retrieval works on meaning, not keyword overlap.
+
+And the end result — a grounded, cited answer in a few seconds, all local:
+
+```
+$ uv run python local/05_answer.py "How can a Lambda function be triggered when a file lands in S3?"
+
+--- answer (173 tokens, 4.1s, 43 tok/s) ---
+
+To trigger a Lambda function when a file is uploaded to an S3 bucket,
+configure `aws_s3_bucket_notification` with the target Lambda ARN and
+specific events. [s3_bucket_notification-004]
+```
+
+The citation points at the exact doc section the claim came from, and every
+cited id is verified against the chunks actually retrieved. Out-of-scope
+questions are refused *before* the LLM is invoked — retrieval scores below
+the calibrated floor mean there's nothing worth generating from.
 
 ## Design decisions
 
