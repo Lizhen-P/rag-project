@@ -94,8 +94,7 @@ score highest — retrieval works on meaning, not keyword overlap.
 And the end result — a grounded, cited answer in a few seconds, all local:
 
 ```
-$ uv run python local/05_answer.py "How can a Lambda function be triggered
-  when a file lands in S3?"
+$ uv run python local/05_answer.py "How can a Lambda function be triggered when a file lands in S3?"
 
 --- answer (173 tokens, 4.1s, 43 tok/s) ---
 
