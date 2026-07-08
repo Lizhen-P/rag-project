@@ -10,5 +10,6 @@ local/corpus/
 
 # Derived pipeline artifacts — regenerate by running the numbered tasks in order
 local/chunks.jsonl
+local/index_meta.jsonl
 local/*.faiss
 local/*.npy
