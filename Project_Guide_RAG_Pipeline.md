@@ -5,6 +5,8 @@ A production-style **data-engineering pipeline** that ingests a document corpus,
 
 > **Why this project:** it sits in the hottest area (GenAI data engineering), it's fully generic (works on any corpus, not insurance), it exercises the entire DEA-C01 skill set, and it uses 2026-current services — which quietly tells a hiring manager you keep up.
 
+> **Status (updated 2026-07-15): the local prototype is complete.** Tasks 0–5 in `local/` run this exact flow end-to-end for $0 (Ollama `bge-m3` + FAISS + `qwen3.5:9b`), with a calibrated refusal floor and machine-verified citations. What remains is the main event below: Phases 0–9, the AWS port — one short-lived branch per phase.
+
 ---
 
 ## What it demonstrates
@@ -23,29 +25,35 @@ Plus the signal you actually want: **"I can build the data plumbing behind an AI
 ## Architecture
 
 ```
-                          ┌─────────────────────────────────────────────┐
-   docs (PDF/MD/HTML) ──► │  S3 raw bucket  (SSE-KMS, versioned)         │
-                          └───────────────┬─────────────────────────────┘
-                                          │  S3 event / scheduled
-                                          ▼
-                          ┌─────────────────────────────────────────────┐
-   Step Functions  ─────► │  Ingest pipeline (Map over new/changed docs) │
+                          ┌──────────────────────────────────────────────┐
+  corpus (73 md docs) ──► │ S3 raw bucket (SSE-KMS, versioned)           │
+                          └──────────────────────┬───────────────────────┘
+                                                 │  S3 event / schedule
+                                                 ▼
+                          ┌──────────────────────────────────────────────┐
+  Step Functions ───────► │ Ingest pipeline (Map over new/changed docs)  │
                           │   1. extract text                            │
-                          │   2. chunk (size + overlap)                  │
-                          │   3. embed  → Bedrock Titan Embeddings v2    │
-                          │   4. upsert → S3 Vectors  (+ metadata)       │
+                          │   2. chunk (structure-aware)                 │
+                          │   3. embed → Bedrock Titan Embeddings v2     │
+                          │   4. upsert → S3 Vectors (+ metadata)        │
                           │   5. write curated chunks → S3 Parquet       │
-                          └───────────────┬─────────────────────────────┘
-                                          │
-   user question ──► API Gateway / URL ──►│ Query Lambda                 │
-                                          │   embed question             │
-                                          │   query S3 Vectors (top-k)   │
-                                          │   build prompt + context     │
-                                          │   Bedrock Claude Haiku        │
-                                          └──────► answer + citations
+                          └──────────────────────┬───────────────────────┘
+                                                 │  index queryable
+                                                 ▼
+                          ┌──────────────────────────────────────────────┐
+  user question ────────► │ Query Lambda (API Gateway / Function URL)    │
+                          │   1. embed the question                      │
+                          │   2. query S3 Vectors → top-k chunks         │
+                          │   3. best score < floor? refuse for $0       │
+                          │   4. prompt contract → Bedrock Claude        │
+                          │      (Converse API)                          │
+                          └──────────────────────┬───────────────────────┘
+                                                 │
+                                                 ▼
+                                 cited answer + verified source list
 ```
 
-All infra defined in **Terraform**; deployed via **GitHub Actions**.
+All infra defined in **Terraform**; deployed via **GitHub Actions**. Every box above already has a **proven local twin** — the complete prototype in `local/` runs the same flow with Ollama + FAISS, and the README's mapping table pairs each stage with its AWS service.
 
 ---
 
@@ -63,7 +71,7 @@ All infra defined in **Terraform**; deployed via **GitHub Actions**.
 | IaC / CI-CD | **Terraform** + **GitHub Actions** | The combo AU employers ask for |
 | Observability | **CloudWatch** logs + custom metrics | Ops maturity |
 
-> **Cost landmine to call out in your README (and avoid):** the obvious vector-store choice, **OpenSearch Serverless, has a ~$700/month minimum floor** even when idle. **S3 Vectors has zero idle cost** — you pay only for storage + queries. Choosing S3 Vectors *and explaining why* is itself a signal of cost-awareness. (For a local $0 dev loop, you can prototype with FAISS/LanceDB, then swap to S3 Vectors for the deployed version.)
+> **Cost landmine to call out in your README (and avoid):** the obvious vector-store choice, **OpenSearch Serverless, has a ~$700/month minimum floor** even when idle. **S3 Vectors has zero idle cost** — you pay only for storage + queries. Choosing S3 Vectors *and explaining why* is itself a signal of cost-awareness. (Exactly what this project did: FAISS for the $0 local dev loop — see `local/03_index.py` — with S3 Vectors reserved for the deployed version.)
 
 ---
 
@@ -83,18 +91,19 @@ Realistic total to build and demo: **a few US dollars.**
 
 - AWS account; **enable Bedrock model access** for Titan Embeddings v2 and a Claude model (console → Bedrock → Model access — approval is usually instant).
 - AWS CLI configured; **Terraform** and **Python 3.12** installed locally; Docker optional.
-- A small **generic corpus** you find interesting — e.g. a set of open-source project docs, government policy PDFs, or arXiv papers. (Technical docs suit the AI-platform direction best.)
-- A new Git repo with a clean structure: `/infra` (Terraform), `/src` (Lambda code), `/eval`, `/docs` (your README assets).
+- **Corpus: settled.** The 73 Terraform-AWS-provider markdown docs, fetched reproducibly at pinned tag `v6.53.0` by `local/00_fetch_corpus.py` — the port re-ingests the same bytes the local prototype indexed.
+- **Repo: this one.** `infra/` (Terraform), `src/` (Lambda code) and `eval/` land beside the finished `local/`, so one history tells the whole story — prototyped locally for $0, then ported.
+- **Git workflow for the port:** one short-lived branch per phase (`aws/phase-N-<name>`) → PR → self-review the diff → merge commit → delete the branch. `main` only ever holds completed, working phases.
 
 ---
 
 ## The build, phase by phase
 
 ### Phase 0 — Repo & foundations *(½ day)*
-- Initialise the repo structure above; add a `README.md` stub and an architecture diagram placeholder.
+- Repo, README and architecture diagram already exist from the local build — add the `infra/` / `src/` / `eval/` skeleton beside `local/`.
 - Write the **Terraform backend** (S3 state bucket + DynamoDB lock) and a `providers.tf`.
 - Create the **billing alarm** and a **KMS key** for encryption.
-- *Commit early; this is also your CI/CD starting point.*
+- *First port branch: `aws/phase-0-foundations`. Commit early; this is also your CI/CD starting point.*
 
 ### Phase 1 — Storage layer *(½ day)*
 - Terraform: **two S3 buckets** — `raw` and `curated` — both **SSE-KMS encrypted**, **versioned**, **public access blocked**.
@@ -109,8 +118,8 @@ Realistic total to build and demo: **a few US dollars.**
 ### Phase 3 — Processing: extract → chunk → embed *(1–2 days, the core)*
 This is where the data-engineering substance lives.
 1. **Extract** text from each document (pypdf / `unstructured` for mixed formats). Handle failures gracefully (dead-letter the bad files).
-2. **Chunk**: ~**500–800 tokens** with **~10–15% overlap**; prefer **structure-aware** splits (by heading/paragraph) over naïve fixed windows. Store per chunk: `chunk_id`, `source_uri`, `position`, and a **content hash**.
-3. **Embed**: call **Bedrock Titan Embeddings v2** in **batches**. Pick a dimension (e.g. 1024) and **record it** — it *must* match the vector index. Batching is your main cost control.
+2. **Chunk**: port `local/02_chunk.py`'s **structure-aware** splitter as-is. *(Settled locally: on this corpus it averages ~174 tokens — well under the classic 500–800 guidance — and Task 4/5 probes showed retrieval stays precise and answers don't run thin. No overlap needed when chunks follow section boundaries.)* Store per chunk: `chunk_id`, `source_uri`, `position`, and a **content hash**.
+3. **Embed**: call **Bedrock Titan Embeddings v2** in **batches**. Dimension is **locked at 1024** — the local build chose `bge-m3` to match Titan v2 exactly so the index schema ports unchanged. Batching is your main cost control.
 4. **Idempotency**: skip any chunk whose content hash already exists — this is what stops you re-embedding (and re-paying) on every run.
 - *Deliverable: a Lambda (or Glue job) that turns a document into `(chunk, embedding, metadata)` records.*
 
@@ -122,8 +131,9 @@ This is where the data-engineering substance lives.
 
 ### Phase 5 — Retrieval + generation *(1 day)*
 - **Query Lambda**: embed the incoming question → **S3 Vectors top-k** (start k=5) with optional metadata filter → assemble retrieved chunks into a context block.
-- **Prompt template**: instruct the model to answer **only from the provided context** and to **cite `source_uri`** per claim; return "I don't know" when context is insufficient (reduces hallucination — good talking point).
-- Call **Bedrock Claude Haiku** via the **Converse API**; return the answer **plus the source list**.
+- **Hard refusal floor before generating** (from `local/05_answer.py`): if the best retrieval score is below the floor, refuse without calling Bedrock — unanswerable questions cost $0. ⚠️ **Recalibrate the threshold**: the local 0.50 belongs to `bge-m3`'s score distribution (hits ≈ 0.57–0.73, noise ≈ 0.38); Titan v2 will have its own — re-run the Task 4 calibration probes against the new index first.
+- **Prompt template**: already written and battle-tested as `05_answer.py`'s `SYSTEM_PROMPT` — answer **only from the provided excerpts**, **cite the chunk id** per claim, exact refusal string when context is insufficient (reduces hallucination — good talking point). Port the text as-is.
+- Call **Bedrock Claude Haiku** via the **Converse API** (same messages shape as the local Ollama `/api/chat` — only the `chat()` function changes); return the answer **plus the source list**.
 - *Deliverable: ask a question in the terminal, get a grounded, cited answer.*
 
 ### Phase 6 — API + a thin UI *(½ day)*
@@ -138,7 +148,7 @@ This is where the data-engineering substance lives.
 ### Phase 8 — Production polish *(1–2 days, what separates you)*
 - **CI/CD**: GitHub Actions → `terraform plan` on PR, `apply` on merge; lint + unit tests for the chunker/retriever.
 - **Observability**: CloudWatch dashboards + **custom metrics** (docs processed, embedding latency, retrieval latency, **tokens/cost per query**).
-- **Evaluation harness** (`/eval`): a small hand-built Q&A set; measure **retrieval hit-rate** and answer quality (RAGAS or a simple scoring script). *Showing you measure RAG quality is rare in junior portfolios and lands well.*
+- **Evaluation harness** (`/eval`): a small hand-built Q&A set; measure **retrieval hit-rate** and answer quality (RAGAS or a simple scoring script). Seeds already exist: `check_citations()` in `05_answer.py` and the calibration probes from Task 4. *Showing you measure RAG quality is rare in junior portfolios and lands well.*
 
 ### Phase 9 — README & packaging *(½ day)*
 Your README is half the project's value. Include:

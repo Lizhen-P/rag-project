@@ -7,7 +7,7 @@ answer grounded in — and cited against — the actual docs.
 
 The build has two deliberate phases:
 
-1. **Local prototype (this repo, in progress)** — runs entirely on my machine
+1. **Local prototype (this repo — complete)** — runs entirely on my machine
    for $0: [Ollama](https://ollama.com) for embeddings + generation, FAISS for
    vector search. Every component is chosen so it has a 1:1 AWS counterpart.
 2. **AWS port (next)** — the same pipeline rebuilt with Terraform on managed
@@ -55,6 +55,11 @@ mapping).
 | 3 | [`03_index.py`](local/03_index.py) | Batch-embed all chunks → FAISS index + metadata sidecar | ✅ |
 | 4 | [`04_retrieve.py`](local/04_retrieve.py) | Question → top-k most relevant chunks, calibrated scores | ✅ |
 | 5 | [`05_answer.py`](local/05_answer.py) | Top-k chunks + question → grounded, cited answer (or an honest refusal) | ✅ |
+
+All six tasks are merged and the prototype runs end-to-end. Next: the AWS
+port, built one short-lived branch per phase (`aws/phase-N-…` → PR →
+self-review → merge) so `main` always holds a working system — phase plan in
+[`Project_Guide_RAG_Pipeline.md`](Project_Guide_RAG_Pipeline.md).
 
 ## Running it
 
@@ -120,9 +125,14 @@ the calibrated floor mean there's nothing worth generating from.
 - **Structure-aware chunking over fixed windows.** Chunks follow the docs'
   heading/section structure, so no chunk mixes unrelated resources. Trade-off:
   short doc sections drag mean chunk size to ~174 tokens (target was 500–800).
-  Deliberately deferred: measure retrieval quality at Task 4 first; if it
-  suffers, merge tiny neighboring sections (~100-token minimum) rather than
-  guess now.
+  Measured before optimizing: Task 4's probes put the right chunk in the top-5
+  on every in-scope question, and Task 5's answers never ran thin — so the
+  small chunks stayed. (Known wart: a 48-token intro stub can outrank meatier
+  sections; not worth a merge pass yet.)
+- **Refuse before generating.** Retrieval scores were calibrated on this
+  corpus + embedder (real hits ≈ 0.57–0.73, out-of-scope noise ≈ 0.38); below
+  a 0.50 floor the LLM is never invoked. One check buys honesty *and* cost
+  control — on AWS, unanswerable questions will cost $0 of Bedrock.
 
 ## Corpus source & licensing
 
@@ -139,6 +149,9 @@ pinned release tag.
 The `_explained.md` series is where the learning lives — one per task:
 [fetching & reproducibility](local/00_fetch_corpus_explained.md) ·
 [embeddings & cosine similarity](local/01_embed_probe_explained.md) ·
-[chunking strategies](local/02_chunk_explained.md).
+[chunking strategies](local/02_chunk_explained.md) ·
+[batch embedding & FAISS](local/03_index_explained.md) ·
+[retrieval & score calibration](local/04_retrieve_explained.md) ·
+[the prompt contract & a two-model bake-off](local/05_answer_explained.md).
 The full build plan, including the AWS port phases, is in
 [`Project_Guide_RAG_Pipeline.md`](Project_Guide_RAG_Pipeline.md).
